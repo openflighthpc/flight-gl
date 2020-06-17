@@ -1,0 +1,162 @@
+#!/bin/bash
+#==============================================================================
+# Copyright (C) 2020-present Alces Flight Ltd.
+#
+# This file is part of Flight GL.
+#
+# This program and the accompanying materials are made available under
+# the terms of the Eclipse Public License 2.0 which is available at
+# <https://www.eclipse.org/legal/epl-2.0>, or alternative license
+# terms made available by Alces Flight Ltd - please direct inquiries
+# about licensing to licensing@alces-flight.com.
+#
+# Flight GL is distributed in the hope that it will be useful, but
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
+# IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS
+# OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A
+# PARTICULAR PURPOSE. See the Eclipse Public License 2.0 for more
+# details.
+#
+# You should have received a copy of the Eclipse Public License 2.0
+# along with Flight GL. If not, see:
+#
+#  https://opensource.org/licenses/EPL-2.0
+#
+# For more information on Flight GL, please visit:
+# https://github.com/openflighthpc/flight-gl
+#==============================================================================
+_start_vglclient() {
+  local logfile port
+  logfile=$FLIGHTGL_CACHE_DIR/$HOSTNAME-$(basename $DISPLAY).vglclient.log
+  port=$(/usr/bin/vglclient -l "$logfile" -d "$DISPLAY" -detach 2>/dev/null)
+  if [ $? -ne 0 -o "$port" = "" ]; then
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: [VGL] ERROR: vglclient failed to execute."
+    exit 1
+  fi
+}
+
+FLIGHTGL_CACHE_DIR="$HOME/.cache/flight/flightgl"
+mkdir -p "$FLIGHTGL_CACHE_DIR"
+HOSTNAME="$(hostname -s)"
+_flightgl_ROOT=${FLIGHTGL_ROOT:-$(cd $(dirname ${BASH_SOURCE[0]})/../.. && pwd)}
+
+_ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      cat <<'EOF'
+SYNOPSIS:
+
+  ${FLIGHT_PROGRAM_NAME:-gl} connect [-s|--start] [--srun] [HOST]
+
+DESCRIPTION:
+
+  Connect to a GLX-capable host to run GUI applications that require
+  or benefit from hardware-based OpenGL rendering.
+
+  HOST is mandatory unless you are running under a Slurm allocation
+  (via `salloc`).
+
+  If you are running under a Slurm allocation, the first allocated
+  host will be chosen unless the HOST parameter is supplied, in which
+  case it must be one of the hosts allocated.
+
+OPTIONS:
+
+  --start
+    Automatically start a new GLX session if one isn't already
+    running.
+
+  --srun
+    Execute using `srun` rather than the default of using `ssh`-based
+    X forwarding. This is useful if you need to ensure the presence of
+    Slurm environment variables, though GUI apps may be less
+    performant under the `srun` connection method.
+
+EOF
+      exit
+      ;;
+    --srun) 
+      _SRUN="true"
+      shift
+      ;;
+    -s|--start)
+      _START="--start"
+      shift
+      ;;
+    *)
+      _ARGS+=($1)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$DISPLAY" ]; then
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: DISPLAY environment variable is unset"
+  exit 1
+elif [ "$SLURM_STEP_ID" ]; then
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: already running under srun step"
+  exit 1
+elif [ "$SLURM_NODELIST" ]; then
+  nodes=($(scontrol show hostnames $SLURM_NODELIST | xargs))
+  if [ "$_SRUN" == "true" ]; then
+    _MODE=slurm+srun
+    shift
+  else
+    _MODE=slurm+ssh
+  fi
+  if [ "${_ARGS[0]}" ]; then
+    for a in "${nodes[@]}"; do
+      if [ "$a" == "${_ARGS[0]}" ]; then
+        _TARGET=$a
+        break
+      fi
+    done
+    if [ -z "$_TARGET" ]; then
+      echo "${FLIGHT_PROGRAM_NAME:-gl}: invalid target node: ${_ARGS[0]}"
+      exit 1
+    fi
+  else
+    _TARGET=${nodes[0]}
+  fi
+  unset nodes a
+elif [ "${_ARGS[0]}" ]; then
+  if [ "$_SRUN" == "true" ]; then
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: allocation for srun step not found"
+    exit 1
+  fi
+  _TARGET="${_ARGS[0]}"
+  _MODE=ssh
+else
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to determine target node"
+  exit 1
+fi
+
+if [ -z "$flight_GL_dummyrun" ]; then
+  _start_vglclient
+fi
+
+case $_MODE in
+  slurm+ssh)
+    # 1. ssh-forwarded X11 with Slurm-driven GPU vars
+    # Use this if performance is more critical than Slurm step variables.
+    _GPU_VARS=$(srun /bin/bash -c "/usr/bin/env | egrep 'CUDA_VISIBLE_DEVICES|GPU_DEVICE_ORDINAL' | xargs")
+    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login $_GPU_VARS VGL_CLIENT=$HOSTNAME $_START
+    ;;
+  slurm+srun)
+    # 2. srun with xhost auth to X11 display
+    # Use this if Slurm step variables are critical to your workflow.
+    xauth add $HOSTNAME$DISPLAY . $(xxd -l 16 -p /dev/urandom)
+    srun --pty -- $_flightgl_ROOT/libexec/share/login DISPLAY=$HOSTNAME$DISPLAY VGL_CLIENT=$HOSTNAME $_START
+    xauth remove $HOSTNAME$DISPLAY
+    ;;
+  ssh)
+    # 3. ssh-forwarded X11 without Slurm
+    # Use this if you're not running under Slurm to derive GPU allocations.
+    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login VGL_CLIENT=$HOSTNAME $_START
+    ;;
+  *)
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to determine connection mode"
+    exit 1
+    ;;
+esac

@@ -1,0 +1,95 @@
+#!/bin/bash
+#==============================================================================
+# Copyright (C) 2020-present Alces Flight Ltd.
+#
+# This file is part of Flight GL.
+#
+# This program and the accompanying materials are made available under
+# the terms of the Eclipse Public License 2.0 which is available at
+# <https://www.eclipse.org/legal/epl-2.0>, or alternative license
+# terms made available by Alces Flight Ltd - please direct inquiries
+# about licensing to licensing@alces-flight.com.
+#
+# Flight GL is distributed in the hope that it will be useful, but
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
+# IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS
+# OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A
+# PARTICULAR PURPOSE. See the Eclipse Public License 2.0 for more
+# details.
+#
+# You should have received a copy of the Eclipse Public License 2.0
+# along with Flight GL. If not, see:
+#
+#  https://opensource.org/licenses/EPL-2.0
+#
+# For more information on Flight GL, please visit:
+# https://github.com/openflighthpc/flight-gl
+#==============================================================================
+(return 0 2>/dev/null) && _flightgl_sourcechk=true
+
+_flightgl_assert_sourced() {
+  if [ "${_flightgl_sourcechk}" != "true" ]; then
+    echo "$0: this script should be sourced, not executed; try: source $0 $@"
+    exit 1
+  fi
+}
+
+_flightgl_main() {
+  case $1 in
+    connect)
+      shift
+      ${_flightgl_ROOT}/libexec/actions/connect "$@"
+      ;;
+    start)
+      _flightgl_assert_sourced "$@"
+      eval "$(${_flightgl_ROOT}/libexec/actions/start)"
+      ;;
+    stop)
+      _flightgl_assert_sourced "$@"
+      eval "$(${_flightgl_ROOT}/libexec/actions/stop)"
+      ;;
+    kill)
+      if [ -z "$2" ]; then
+        echo "Usage: $0 kill <GPU>" 1>&2
+        return
+      fi
+      ${_flightgl_ROOT}/libexec/actions/kill $2
+      ;;
+    status)
+      if [ "${FLIGHTGL_ACTIVE}" ]; then
+        echo "Active GLX session for GPU ${FLIGHTGL_GPU} (${FLIGHTGL_BUSID}) attached to display ${FLIGHTGL_DISPLAY}" 1>&2
+      else
+        echo "No active GLX session" 1>&2
+        exit 2
+      fi
+      ;;
+    list)
+      ${_flightgl_ROOT}/libexec/actions/list
+      exit $?
+      ;;
+    *)
+      binname="${FLIGHT_PROGRAM_NAME:-gl}"
+      cat <<EOF
+Usage: $binname COMMAND [[OPTION]... [ARGS]]
+Manage life-cycles of hardware accelerated GLX-capable X-servers.
+
+Commands:
+EOF
+      printf "  %-22s  %s\n" "$binname start" "Start a GLX session."
+      printf "  %-22s  %s\n" "$binname stop" "Stop currently active GLX session."
+      printf "  %-22s  %s\n" "$binname status" "Show currently active GLX session status."
+      printf "  %-22s  %s\n" "$binname list" "List active GLX sessions running on this node."
+      printf "  %-22s  %s\n" "$binname kill" "Kill a running GLX session."
+      printf "  %-22s  %s\n" "$binname connect" "Connect to a GLX-capable node."
+      cat <<EOF
+
+Please report bugs to <flight@openflighthpc.org>
+OpenFlight home page: <https://openflighthpc.org/>
+EOF
+      ;;
+  esac
+}
+
+_flightgl_ROOT=${FLIGHTGL_ROOT:-$(cd $(dirname ${BASH_SOURCE[0]})/.. && pwd)}
+_flightgl_main "$@"
+unset _flightgl_main _flightgl_assert_sourced _flightgl_sourcechk _flightgl_ROOT

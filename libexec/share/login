@@ -1,0 +1,80 @@
+#!/bin/bash
+#==============================================================================
+# Copyright (C) 2020-present Alces Flight Ltd.
+#
+# This file is part of Flight GL.
+#
+# This program and the accompanying materials are made available under
+# the terms of the Eclipse Public License 2.0 which is available at
+# <https://www.eclipse.org/legal/epl-2.0>, or alternative license
+# terms made available by Alces Flight Ltd - please direct inquiries
+# about licensing to licensing@alces-flight.com.
+#
+# Flight GL is distributed in the hope that it will be useful, but
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
+# IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS
+# OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A
+# PARTICULAR PURPOSE. See the Eclipse Public License 2.0 for more
+# details.
+#
+# You should have received a copy of the Eclipse Public License 2.0
+# along with Flight GL. If not, see:
+#
+#  https://opensource.org/licenses/EPL-2.0
+#
+# For more information on Flight GL, please visit:
+# https://github.com/openflighthpc/flight-gl
+#==============================================================================
+# if there's already a running GLX session, set that one up
+shopt -s nullglob
+unset found
+for a in "$HOME/.cache/flight/flightgl"/$(hostname -s).*.vars; do
+  . "$a"
+  if [ -d /proc/$FLIGHTGL_PID ]; then
+    echo "Connecting to existing GLX session for GPU ${FLIGHTGL_GPU} (${FLIGHTGL_BUSID}) attached to display ${FLIGHTGL_DISPLAY}" 1>&2
+    export VGL_DISPLAY=${FLIGHTGL_DISPLAY}.0
+    export FLIGHTGL_ACTIVE=true
+    export FLIGHTGL_PID FLIGHTGL_BUSID FLIGHTGL_GPU FLIGHTGL_DISPLAY
+    found=true
+    break
+  fi
+done
+shopt -u nullglob
+if [ -z "$found" ]; then
+  unset FLIGHTGL_PID FLIGHTGL_BUSID FLIGHTGL_GPU FLIGHTGL_DISPLAY
+  export VGL_DISPLAY="as no GLX session is currently active"
+fi
+
+# set up environment
+for a in "$@"; do
+  case $a in
+    *=*)
+      IFS='=' read -ra v <<<"$a"
+      export ${v[0]}="${v[1]}"
+      ;;
+    --start)
+      if [ "${FLIGHTGL_ACTIVE}" != "true" ]; then
+        _flightgl_ROOT=${FLIGHTGL_ROOT:-$(cd $(dirname ${BASH_SOURCE[0]})/../.. && pwd)}
+        eval "$(${_flightgl_ROOT}/libexec/actions/start)"
+        unset _flightgl_ROOT
+      else
+        echo "Skipping GLX session start request as existing session found." 1>&2
+      fi
+      ;;
+    *)
+      echo "Unrecognized parameter: $a"
+      ;;
+  esac
+done
+
+unset a v found
+
+if [ -z "${FLIGHTGL_ACTIVE}" ]; then
+  echo "Note: no GLX session is running; use '${FLIGHT_PROGRAM_NAME:-gl} start' to activate a session."
+fi
+
+if type -t _flightgl_cleanup &>/dev/null; then
+  $SHELL -l
+else
+  exec $SHELL -l
+fi

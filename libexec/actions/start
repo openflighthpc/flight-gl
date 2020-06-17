@@ -1,0 +1,197 @@
+#!/bin/bash
+#==============================================================================
+# Copyright (C) 2020-present Alces Flight Ltd.
+#
+# This file is part of Flight GL.
+#
+# This program and the accompanying materials are made available under
+# the terms of the Eclipse Public License 2.0 which is available at
+# <https://www.eclipse.org/legal/epl-2.0>, or alternative license
+# terms made available by Alces Flight Ltd - please direct inquiries
+# about licensing to licensing@alces-flight.com.
+#
+# Flight GL is distributed in the hope that it will be useful, but
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
+# IMPLIED INCLUDING, WITHOUT LIMITATION, ANY WARRANTIES OR CONDITIONS
+# OF TITLE, NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A
+# PARTICULAR PURPOSE. See the Eclipse Public License 2.0 for more
+# details.
+#
+# You should have received a copy of the Eclipse Public License 2.0
+# along with Flight GL. If not, see:
+#
+#  https://opensource.org/licenses/EPL-2.0
+#
+# For more information on Flight GL, please visit:
+# https://github.com/openflighthpc/flight-gl
+#==============================================================================
+FLIGHTGL_ROOT=${FLIGHTGL_ROOT:-$(cd $(dirname ${BASH_SOURCE[0]})/../.. && pwd)}
+unset _DISPLAY _BUSID_HEX
+
+if [ -z "${flight_GL_dummyrun}" ]; then
+  if ! /usr/sbin/lsmod | grep -q 'nvidia ' &>/dev/null; then
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: this node does not have GPU capability" 1>&2
+    exit 1
+  fi
+fi
+
+if [ -x /usr/bin/Xorg ]; then
+  if [ -u /usr/bin/Xorg ]; then
+    if [ ! -x $HOME/.local/share/flight/flightgl/libexec/bin/Xorg ]; then
+      mkdir -p $HOME/.local/share/flight/flightgl/libexec/bin
+      cp /usr/bin/Xorg $HOME/.local/share/flight/flightgl/libexec/bin/Xorg
+    elif ! diff -q /usr/bin/Xorg $HOME/.local/share/flight/flightgl/libexec/bin/Xorg >/dev/null; then
+      cp /usr/bin/Xorg $HOME/.local/share/flight/flightgl/libexec/bin/Xorg
+    fi
+    _XORG_BIN=$HOME/.local/share/flight/flightgl/libexec/bin/Xorg
+  else
+    _XORG_BIN=/usr/bin/Xorg
+  fi
+else
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to locate Xorg binary" 1>&2
+  exit 1
+fi
+
+if [ "${FLIGHTGL_PID}" -a -d /proc/${FLIGHTGL_PID} ]; then
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: GLX session for GPU ${FLIGHTGL_GPU} (${FLIGHTGL_BUSID}) attached to display ${FLIGHTGL_DISPLAY} already active" 1>&2
+  exit 1
+fi
+
+echo -e "Starting GLX session:\n" 1>&2
+
+echo -n "   GPU device: GPU ? (?) ..." 1>&2
+
+if [ "${flight_GL_dummyrun}" ]; then
+  _BUSID_HEX=0x00
+else
+  # Determine allocated GPU
+  if [ "$CUDA_VISIBLE_DEVICES" ]; then
+    _BUSID_HEX=$(
+      _nvidia_smi --query-gpu=pci.bus \
+                  --format=csv,noheader \
+                  --id=${CUDA_VISIBLE_DEVICES%%,*}
+              )
+  else
+    # If no GPU allocated, choose next free GPU
+    _BUSID_HEX=$(
+      nvidia-smi --query-gpu=memory.used,pci.bus \
+                 --format=csv,noheader,nounits | \
+        grep '^0, ' | head -n1 | cut -f2 -d' '
+              )
+  fi
+fi
+
+if [ -z "$_BUSID_HEX" ]; then
+  echo -e "\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bnot found     \n" 1>&2
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to determine target GPU" 1>&2
+  exit 1
+fi
+
+echo -ne "\b\b\b\b\b\b\b($_BUSID_HEX) ..." 1>&2
+
+_BUSID_DEC=$(printf %d $_BUSID_HEX)
+if [ "${flight_GL_dummyrun}" ]; then
+  _GPU=0
+else
+  _GPU=$(nvidia-smi --query-gpu=index,pci.bus --format=csv,noheader,nounits | grep $_BUSID_HEX | cut -f1 -d',')
+fi
+
+echo -e "\b\b\b\b\b\b\b\b\b\b\b\b$_GPU ($_BUSID_HEX)    " 1>&2
+
+FLIGHTGL_CACHE_DIR="$HOME/.cache/flight/flightgl"
+mkdir -p "$FLIGHTGL_CACHE_DIR"
+HOSTNAME="$(hostname -s)"
+FLIGHTGL_CONF="${FLIGHTGL_CACHE_DIR}/${HOSTNAME}.gpu${_GPU}.conf"
+FLIGHTGL_LOG="${FLIGHTGL_CACHE_DIR}/${HOSTNAME}.gpu${_GPU}.log"
+FLIGHTGL_VARS="${FLIGHTGL_CACHE_DIR}/${HOSTNAME}.gpu${_GPU}.vars"
+FLIGHTGL_PID="${FLIGHTGL_CACHE_DIR}/${HOSTNAME}.gpu${_GPU}.pid"
+
+# check to see if we're already running
+if [ -f "${FLIGHTGL_PID}" ]; then
+  if [ -d /proc/$(cat ${FLIGHTGL_PID}) ]; then
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: session already running on GPU ${_GPU}" 1>&2
+    exit 1
+  fi
+fi
+
+# create X config file
+sed -e "s/%BUSID%/$_BUSID_DEC/g" \
+    ${FLIGHTGL_ROOT}/etc/xorg.conf.tpl > \
+    "${FLIGHTGL_CONF}"
+
+echo -n "   TTY device: ? ..." 1>&2
+
+# check sudo access available
+if sudo -l ${FLIGHTGL_ROOT}/libexec/share/tty chown &>/dev/null; then
+  # Determine next free TTY
+  _TTY=$(sudo ${FLIGHTGL_ROOT}/libexec/share/tty chown)
+  if [ $? -gt 0 ]; then
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to allocate TTY (not found)" 1>&2
+    exit 1
+  fi
+else
+  echo -e "\b\b\b\b\bpermission denied\n" 1>&2
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to allocate TTY (permission denied)" 1>&2
+  exit 1
+fi
+
+echo -e "\b\b\b\b\b/dev/tty${_TTY}" 1>&2
+echo -n "  X11 display: ? ..." 1>&2
+
+# Determine next free X display
+for a in $(seq 1 9); do
+  if [ ! -e /tmp/.X$a-lock ]; then
+    _DISPLAY=:$a
+    break
+  fi
+done
+if [ -z "$_DISPLAY" ]; then
+  echo -e "\b\b\b\b\bnot found       \n" 1>&2
+  echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to allocate X11 display" 1>&2
+  exit 1
+fi
+echo -e "\b\b\b\b\b${_DISPLAY}    " 1>&2
+
+echo -n "  X11 process: ? ..." 1>&2
+
+if [ "${flight_GL_dummyrun}" ]; then
+  _XORG_PID=0
+else
+  ${_XORG_BIN} ${_DISPLAY} vt${_TTY} \
+               -nolisten tcp \
+               -config "${FLIGHTGL_CONF}" > "${FLIGHTGL_LOG}" 2>&1 &
+  _XORG_PID=$!
+  sleep 0.5
+fi
+
+echo -n "${_XORG_PID}" > "${FLIGHTGL_PID}"
+
+if sudo -l ${FLIGHTGL_ROOT}/libexec/share/tty disown "${_TTY}" &>/dev/null; then
+  sudo ${FLIGHTGL_ROOT}/libexec/share/tty disown "${_TTY}"
+fi
+echo -e "\b\b\b\b\b${_XORG_PID}     \n" 1>&2
+
+echo "GLX session started for GPU ${_GPU} (${_BUSID_HEX}) attached to display $_DISPLAY" 1>&2
+
+cat <<EOF > "${FLIGHTGL_VARS}"
+FLIGHTGL_DISPLAY=${_DISPLAY}
+FLIGHTGL_GPU=${_GPU}
+FLIGHTGL_BUSID=${_BUSID_HEX}
+FLIGHTGL_PID=${_XORG_PID}
+EOF
+
+cat <<EOF
+_flightgl_cleanup() {
+    [ -d /proc/${_XORG_PID} ] && kill ${_XORG_PID}
+}
+
+trap "exit \\\$exit_code" INT TERM
+trap "exit_code=\\\$?; _flightgl_cleanup; kill 0" EXIT
+
+export VGL_DISPLAY=${_DISPLAY}.0
+export FLIGHTGL_ACTIVE=true
+export FLIGHTGL_DISPLAY=${_DISPLAY}
+export FLIGHTGL_GPU=${_GPU}
+export FLIGHTGL_BUSID=${_BUSID_HEX}
+export FLIGHTGL_PID=${_XORG_PID}
+EOF
