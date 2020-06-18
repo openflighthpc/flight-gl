@@ -45,6 +45,9 @@ if [ -z "$found" ]; then
   export VGL_DISPLAY="as no GLX session is currently active"
 fi
 
+n="${1//+/ }"
+shift
+
 # set up environment
 for a in "$@"; do
   case $a in
@@ -67,11 +70,11 @@ for a in "$@"; do
   esac
 done
 
-unset a v found
-
 if [ -z "${FLIGHTGL_ACTIVE}" ]; then
-  echo "Note: no GLX session is running; use '${FLIGHT_PROGRAM_NAME:-gl} start' to activate a session."
+  echo "Note: no GLX session is running; use '${n:-gl} start' to activate a session."
 fi
+
+unset a v found n
 
 if type -t _flightgl_cleanup &>/dev/null; then
   $SHELL -l

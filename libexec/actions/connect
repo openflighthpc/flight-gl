@@ -141,19 +141,22 @@ case $_MODE in
     # 1. ssh-forwarded X11 with Slurm-driven GPU vars
     # Use this if performance is more critical than Slurm step variables.
     _GPU_VARS=$(srun /bin/bash -c "/usr/bin/env | egrep 'CUDA_VISIBLE_DEVICES|GPU_DEVICE_ORDINAL' | xargs")
-    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login $_GPU_VARS VGL_CLIENT=$HOSTNAME $_START
+    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login "${FLIGHT_PROGRAM_NAME// /+}" \
+         $_GPU_VARS VGL_CLIENT=$HOSTNAME $_START
     ;;
   slurm+srun)
     # 2. srun with xhost auth to X11 display
     # Use this if Slurm step variables are critical to your workflow.
     xauth add $HOSTNAME$DISPLAY . $(xxd -l 16 -p /dev/urandom)
-    srun --pty -- $_flightgl_ROOT/libexec/share/login DISPLAY=$HOSTNAME$DISPLAY VGL_CLIENT=$HOSTNAME $_START
+    srun --pty -- $_flightgl_ROOT/libexec/share/login "${FLIGHT_PROGRAM_NAME// /+}" \
+         DISPLAY=$HOSTNAME$DISPLAY VGL_CLIENT=$HOSTNAME $_START
     xauth remove $HOSTNAME$DISPLAY
     ;;
   ssh)
     # 3. ssh-forwarded X11 without Slurm
     # Use this if you're not running under Slurm to derive GPU allocations.
-    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login VGL_CLIENT=$HOSTNAME $_START
+    exec ssh -t -Y $_TARGET $_flightgl_ROOT/libexec/share/login "${FLIGHT_PROGRAM_NAME// /+}" \
+         VGL_CLIENT=$HOSTNAME $_START
     ;;
   *)
     echo "${FLIGHT_PROGRAM_NAME:-gl}: unable to determine connection mode"

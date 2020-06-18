@@ -29,7 +29,7 @@
 
 _flightgl_assert_sourced() {
   if [ "${_flightgl_sourcechk}" != "true" ]; then
-    echo "$0: this script should be sourced, not executed; try: source $0 $@"
+    echo "${FLIGHT_PROGRAM_NAME:-gl}: direct execution detected; try: ${FLIGHT_PROGRAM_NAME:-source $0} $@"
     exit 1
   fi
 }
@@ -50,7 +50,7 @@ _flightgl_main() {
       ;;
     kill)
       if [ -z "$2" ]; then
-        echo "Usage: $0 kill <GPU>" 1>&2
+        echo "Usage: ${FLIGHT_PROGRAM_NAME:-gl} kill <GPU>" 1>&2
         return
       fi
       ${_flightgl_ROOT}/libexec/actions/kill $2
