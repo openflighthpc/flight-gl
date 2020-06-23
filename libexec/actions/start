@@ -122,7 +122,7 @@ sed -e "s/%BUSID%/$_BUSID_DEC/g" \
 echo -n "   TTY device: ? ..." 1>&2
 
 # check sudo access available
-if sudo -l ${FLIGHTGL_ROOT}/libexec/share/tty chown &>/dev/null; then
+if sudo -ln ${FLIGHTGL_ROOT}/libexec/share/tty chown &>/dev/null; then
   # Determine next free TTY
   _TTY=$(sudo ${FLIGHTGL_ROOT}/libexec/share/tty chown)
   if [ $? -gt 0 ]; then
@@ -166,7 +166,7 @@ fi
 
 echo -n "${_XORG_PID}" > "${FLIGHTGL_PID}"
 
-if sudo -l ${FLIGHTGL_ROOT}/libexec/share/tty disown "${_TTY}" &>/dev/null; then
+if sudo -ln ${FLIGHTGL_ROOT}/libexec/share/tty disown "${_TTY}" &>/dev/null; then
   sudo ${FLIGHTGL_ROOT}/libexec/share/tty disown "${_TTY}"
 fi
 echo -e "\b\b\b\b\b${_XORG_PID}     \n" 1>&2
